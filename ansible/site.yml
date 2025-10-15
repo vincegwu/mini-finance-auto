@@ -1,0 +1,111 @@
+---
+- name: Install and configure Nginx
+  hosts: web
+  become: yes
+  vars:
+    nginx_conf: /etc/nginx/sites-available/default
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install required packages
+      apt:
+        name:
+          - nginx
+          - git
+        state: present
+
+    - name: Ensure Nginx is enabled and running
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+
+- name: Deploy static mini finance website
+  hosts: web
+  become: yes
+  vars:
+    site_repo: "https://github.com/vincegwu/mini-finance-app.git"
+    tmp_dir: "/home/azureuser/mini-finance-app"
+    nginx_root: "/var/www/html"
+
+  tasks:
+    - name: Remove default Nginx index
+      file:
+        path: "{{ nginx_root }}/index.nginx-debian.html"
+        state: absent
+      ignore_errors: yes
+
+    - name: Install Node.js and npm
+      apt:
+        name:
+          - nodejs
+          - npm
+        state: present
+        update_cache: yes
+
+    - name: Clone static site into temporary directory (user-owned)
+      git:
+        repo: "{{ site_repo }}"
+        dest: "{{ tmp_dir }}"
+        version: main
+
+    - name: Install npm dependencies
+      npm:
+        path: "{{ tmp_dir }}"
+        production: no
+
+    - name: Build the static app
+      command: npm run build
+      args:
+        chdir: "{{ tmp_dir }}"
+    
+
+    - name: Deploy built app to Nginx root
+      copy:
+        src: "{{ tmp_dir }}/build/"
+        dest: "{{ nginx_root }}/"
+        owner: www-data
+        group: www-data
+        mode: '0755'
+        remote_src: yes
+
+    - name: Ensure proper ownership for Nginx root
+      file:
+        path: "{{ nginx_root }}"
+        owner: www-data
+        group: www-data
+        recurse: yes
+
+
+    - name: Reload Nginx
+      service:
+        name: nginx
+        state: reloaded
+
+
+- name: Verify Nginx and deployment
+  hosts: web
+  become: yes
+  
+  tasks:
+    - name: Check Nginx service status
+      service_facts:
+
+    - name: Display Nginx status
+      debug:
+        msg: "Nginx is {{ 'running' if services['nginx'].state == 'running' else 'not running' }}"
+
+
+    - name: Check homepage availability
+      uri:
+        url: http://localhost
+        return_content: yes
+      register: homepage
+
+
+    - name: Show homepage preview
+      debug:
+        msg: "{{ homepage.content | truncate(200) }}"
